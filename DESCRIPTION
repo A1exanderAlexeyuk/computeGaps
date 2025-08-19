@@ -3,7 +3,7 @@ Title: Treatment Gaps and Prevalence Analysis for OMOP Common Data Model
 Version: 0.0.0.9000
 Authors@R: 
     person("OHDSI", "Collaborative", , "collaborators@ohdsi.org", role = c("aut", "cre"))
-Description: An OHDSI package for analyzing treatment gaps and prevalence of diagnostic tests and procedures in OMOP Common Data Model (CDM) cohorts. This package provides comprehensive tools for identifying treatment gaps by examining the frequency, distribution, and timing of medical interventions across patient populations. It enables prevalence analysis of diagnostic procedures, laboratory tests, and therapeutic interventions to support evidence-based healthcare research, clinical quality improvement initiatives, and comparative effectiveness research by leveraging standardized OMOP CDM data structures and enabling cross-database analytical workflows.
+Description: Calculates prevalence of diagnostic tests and procedures from TSV specifications. Reads TSV files containing cohort and test information with time windows, queries OMOP CDM databases to compute prevalence statistics, and returns results as tibbles without database writes.
 License: Apache License (>= 2)
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
