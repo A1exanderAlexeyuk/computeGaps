@@ -43,22 +43,66 @@ library(DatabaseConnector)
 # Database Connection
 
 ```{r connection}
-# SQL Server example
+# SQL Server example using DatabaseConnector with JDBC
 connection <- DatabaseConnector::connect(
   dbms = "sql server",
   server = "your_server_name",
-  database = "your_database_name", 
   user = "your_username",
-  password = "your_password"
+  password = "your_password",
+  pathToDriver = "path/to/jdbc/drivers"
 )
 
-# PostgreSQL example
+# PostgreSQL example using DatabaseConnector with JDBC
 connection <- DatabaseConnector::connect(
   dbms = "postgresql",
   server = "your_server/your_database",
   user = "your_username", 
-  password = "your_password"
+  password = "your_password",
+  pathToDriver = "path/to/jdbc/drivers"
 )
+
+# Oracle example using DatabaseConnector
+connection <- DatabaseConnector::connect(
+  dbms = "oracle",
+  server = "your_server/your_service_name",
+  user = "your_username",
+  password = "your_password",
+  pathToDriver = "path/to/jdbc/drivers"
+)
+
+# BigQuery example using DatabaseConnector
+connection <- DatabaseConnector::connect(
+  dbms = "bigquery",
+  connectionString = "jdbc:bigquery://https://www.googleapis.com/bigquery/v2:443;ProjectId=your_project_id;OAuthType=0;OAuthServiceAcctEmail=your_service_account@project.iam.gserviceaccount.com;OAuthPvtKeyPath=path/to/key.json;",
+  pathToDriver = "path/to/jdbc/drivers"
+)
+
+# Redshift example using DatabaseConnector
+connection <- DatabaseConnector::connect(
+  dbms = "redshift",
+  server = "your_cluster.region.redshift.amazonaws.com/your_database",
+  user = "your_username",
+  password = "your_password",
+  pathToDriver = "path/to/jdbc/drivers",
+  port = 5439
+)
+
+# Using connection details object for reusability
+connectionDetails <- DatabaseConnector::createConnectionDetails(
+  dbms = "postgresql",
+  server = "your_server/your_database",
+  user = "your_username",
+  password = "your_password",
+  pathToDriver = "path/to/jdbc/drivers"
+)
+
+connection <- DatabaseConnector::connect(connectionDetails)
+
+# Download JDBC drivers if needed
+DatabaseConnector::downloadJdbcDrivers(dbms = "postgresql", pathToDriver = "path/to/jdbc/drivers")
+DatabaseConnector::downloadJdbcDrivers(dbms = "sql server", pathToDriver = "path/to/jdbc/drivers")
+DatabaseConnector::downloadJdbcDrivers(dbms = "oracle", pathToDriver = "path/to/jdbc/drivers")
+DatabaseConnector::downloadJdbcDrivers(dbms = "redshift", pathToDriver = "path/to/jdbc/drivers")
 ```
 
 # Input Data Format
@@ -354,6 +398,8 @@ if (!validation_result) {
 - Verify connection parameters
 - Check database permissions
 - Ensure required schemas exist
+- Verify JDBC drivers are properly installed
+- Check `pathToDriver` points to correct location
 
 ### TSV Validation Errors
 - Check column names match exactly
