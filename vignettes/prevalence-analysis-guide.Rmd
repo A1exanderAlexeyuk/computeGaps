@@ -23,11 +23,11 @@ The `computeGaps` package provides a comprehensive solution for analyzing treatm
 
 ## Key Features
 
-- **Database-Sufficient Analysis**: All computations performed using SQL queries
-- **Database Result Storage**: Results stored in `cohort_database_schema` for persistence  
+- **Database-Efficient Analysis**: All computations performed using SQL queries
 - **TSV Configuration**: Flexible input format with JSON metadata
 - **OMOP CDM Compatible**: Works with standard OMOP domains
 - **Time Window Analysis**: Configurable time periods around index dates
+- **Tibble Output**: Results returned as tibbles for easy analysis
 
 # Installation and Setup
 
@@ -38,6 +38,8 @@ The `computeGaps` package provides a comprehensive solution for analyzing treatm
 # Load the package
 library(computeGaps)
 library(DatabaseConnector)
+library(dplyr)
+library(tidyr)
 ```
 
 # Database Connection
@@ -150,94 +152,92 @@ validation_result <- validate_tsv_structure(tsv_data, verbose = TRUE)
 ## Basic Analysis
 
 ```{r basic_analysis}
-# Run prevalence analysis
-results_table <- analyze_prevalence_from_tsv_db(
+# Run prevalence analysis and get results as a tibble
+results <- compute_prevalence_from_tsv(
   tsv_file_path = "sample_analysis.tsv",
   connection = connection,
-  cohort_database_schema = "results_schema",
-  cohort_table_name = "cohort",
-  cdm_database_schema = "cdm_schema"
-)
-```
-
-## Complete Workflow
-
-```{r complete_workflow}
-# Run complete analysis with automatic reporting
-analysis_results <- run_complete_prevalence_analysis(
-  tsv_file_path = "sample_analysis.tsv",
-  connection = connection,
-  cohort_database_schema = "results_schema", 
-  cohort_table_name = "cohort",
   cdm_database_schema = "cdm_schema",
-  output_dir = "results"
+  cohort_database_schema = "cohort_schema",
+  cohort_table_name = "cohort"
 )
+
+# View the results
+print(results)
+
+# Check column names
+names(results)
 ```
 
-# Querying Results
+## Working with Results
 
-## Basic Queries
+```{r working_with_results}
+# Filter high prevalence results
+high_prevalence <- results %>%
+  filter(patient_count >= 10.0)
 
-```{r basic_queries}
-# Get all results
-all_results <- query_prevalence_results(
-  connection = connection,
-  cohort_database_schema = "results_schema",
-  results_table_name = "prevalence_analysis_results"
-)
+# Group by cohort
+cohort_summary <- results %>%
+  group_by(cohortname) %>%
+  summarise(
+    total_tests = n(),
+    avg_prevalence = mean(patient_count, na.rm = TRUE),
+    max_prevalence = max(patient_count, na.rm = TRUE)
+  )
 
-# Get summary statistics
-summary_stats <- get_results_summary(
-  connection = connection,
-  cohort_database_schema = "results_schema", 
-  results_table_name = "prevalence_analysis_results"
-)
-```
-
-## Filtered Queries
-
-```{r filtered_queries}
-# Filter by high prevalence (>= 10%)
-high_prevalence <- query_prevalence_results(
-  connection = connection,
-  cohort_database_schema = "results_schema",
-  results_table_name = "prevalence_analysis_results",
-  min_prevalence = 10.0
-)
-
-# Filter by workflow stage
-confirmatory_results <- query_prevalence_results(
-  connection = connection,
-  cohort_database_schema = "results_schema",
-  results_table_name = "prevalence_analysis_results", 
-  workflow_stage = "Confirmatory Diagnosis"
-)
+# Group by workflow stage
+workflow_summary <- results %>%
+  group_by(workflow_stage) %>%
+  summarise(
+    total_tests = n(),
+    avg_prevalence = mean(patient_count, na.rm = TRUE),
+    patients_tested = sum(n_patients_with_op, na.rm = TRUE)
+  )
 
 # Filter by domain
-procedure_results <- query_prevalence_results(
-  connection = connection,
-  cohort_database_schema = "results_schema",
-  results_table_name = "prevalence_analysis_results",
-  domain = "Procedure"
-)
+procedure_results <- results %>%
+  filter(omop_object_domain == "Procedure")
+
+# Sort by prevalence
+top_tests <- results %>%
+  arrange(desc(patient_count)) %>%
+  head(20)
 ```
 
-## Summary Analyses
+## Advanced Analysis
 
-```{r summary_analyses}
-# Results by cohort
-cohort_summary <- get_results_by_cohort(
-  connection = connection,
-  cohort_database_schema = "results_schema",
-  results_table_name = "prevalence_analysis_results"
-)
+```{r advanced_analysis}
+# Analyze prevalence patterns across time windows
+time_window_analysis <- results %>%
+  mutate(
+    window_start = days_around_index_1,
+    window_end = days_around_index_2,
+    window_size = window_end - window_start
+  ) %>%
+  group_by(window_size, workflow_stage) %>%
+  summarise(
+    avg_prevalence = mean(patient_count, na.rm = TRUE),
+    n_tests = n()
+  )
 
-# Results by workflow stage
-workflow_summary <- get_results_by_workflow_stage(
-  connection = connection,
-  cohort_database_schema = "results_schema", 
-  results_table_name = "prevalence_analysis_results"
-)
+# Compare prevalence across cohorts
+cohort_comparison <- results %>%
+  select(cohortname, object_custom_name, patient_count) %>%
+  pivot_wider(
+    names_from = cohortname,
+    values_from = patient_count,
+    values_fill = 0
+  )
+
+# Find tests with high variability across cohorts
+variability_analysis <- results %>%
+  group_by(object_custom_name) %>%
+  summarise(
+    n_cohorts = n_distinct(cohortname),
+    prevalence_sd = sd(patient_count, na.rm = TRUE),
+    prevalence_range = max(patient_count, na.rm = TRUE) - min(patient_count, na.rm = TRUE)
+  ) %>%
+  filter(n_cohorts > 1) %>%
+  arrange(desc(prevalence_sd))
 ```
 
 # Exporting Results
@@ -245,41 +245,36 @@ workflow_summary <- get_results_by_workflow_stage(
 ## File Exports
 
 ```{r exports}
-# Export to TSV
-export_results_to_file(
-  connection = connection,
-  cohort_database_schema = "results_schema",
-  results_table_name = "prevalence_analysis_results",
-  output_path = "prevalence_results.tsv",
-  format = "tsv"
-)
+# Export to CSV
+write.csv(results, "prevalence_results.csv", row.names = FALSE)
 
-# Export to Excel with summary
-export_results_to_file(
-  connection = connection,
-  cohort_database_schema = "results_schema",
-  results_table_name = "prevalence_analysis_results", 
-  output_path = "results_with_summary.xlsx",
-  format = "xlsx",
-  include_summary = TRUE
-)
+# Export to TSV
+write.table(results, "prevalence_results.tsv", sep = "\t", row.names = FALSE)
+
+# Export to Excel (requires writexl package)
+# writexl::write_xlsx(results, "prevalence_results.xlsx")
 
 # Export filtered results
-export_results_to_file(
-  connection = connection,
-  cohort_database_schema = "results_schema",
-  results_table_name = "prevalence_analysis_results",
-  output_path = "high_prevalence.tsv", 
-  format = "tsv",
-  filters = list(min_prevalence = 10.0)
-)
+high_prevalence_results <- results %>%
+  filter(patient_count >= 10.0)
+write.csv(high_prevalence_results, "high_prevalence_results.csv", row.names = FALSE)
+
+# Export summary statistics
+summary_stats <- results %>%
+  group_by(cohortname, workflow_stage) %>%
+  summarise(
+    n_tests = n(),
+    avg_prevalence = mean(patient_count, na.rm = TRUE),
+    total_patients_tested = sum(n_patients_with_op, na.rm = TRUE)
+  )
+write.csv(summary_stats, "prevalence_summary.csv", row.names = FALSE)
 ```
 
 # Understanding Results
 
 ## Output Structure
 
-The results table contains:
+The results tibble contains:
 
 | Column | Description |
 |--------|-------------|
@@ -290,6 +285,8 @@ The results table contains:
 | `n_patients` | Total patients in cohort |
 | `n_patients_with_op` | Patients with test/procedure |
 | `patient_count` | **Prevalence percentage** |
+| `days_around_index_1` | Start of time window |
+| `days_around_index_2` | End of time window |
 
 ## Interpreting Prevalence
 
@@ -336,24 +333,49 @@ The package supports these OMOP domains:
 - **Device** (`device_exposure`)
 - **Observation** (`observation`)
 
-# Testing and Validation
+# Visualization Examples
 
-## Quick Test
+```{r visualization}
+# Create visualizations with ggplot2
+library(ggplot2)
 
-```{r testing}
-# Run quick functionality test
-test_result <- quick_prevalence_test(
-  connection = connection,
-  cohort_database_schema = "test_schema"
-)
+# Prevalence by workflow stage
+ggplot(results, aes(x = workflow_stage, y = patient_count)) +
+  geom_boxplot() +
+  theme_minimal() +
+  labs(
+    title = "Prevalence Distribution by Workflow Stage",
+    x = "Workflow Stage",
+    y = "Prevalence (%)"
+  )
 
-# Setup test environment
-setup_success <- setup_test_database(
-  connection = connection,
-  cohort_database_schema = "test_schema",
-  create_sample_cohort = TRUE
-)
+# Top 10 most prevalent tests
+top_10 <- results %>%
+  arrange(desc(patient_count)) %>%
+  head(10)
+
+ggplot(top_10, aes(x = reorder(object_custom_name, patient_count), y = patient_count)) +
+  geom_col(fill = "steelblue") +
+  coord_flip() +
+  theme_minimal() +
+  labs(
+    title = "Top 10 Most Prevalent Tests/Procedures",
+    x = "",
+    y = "Prevalence (%)"
+  )
+
+# Prevalence heatmap by cohort and test
+library(tidyr)
+heatmap_data <- results %>%
+  select(cohortname, object_custom_name, patient_count) %>%
+  pivot_wider(names_from = cohortname, values_from = patient_count, values_fill = 0)
+
+# Convert to matrix for heatmap (if needed)
+# heatmap_matrix <- as.matrix(heatmap_data[,-1])
+# rownames(heatmap_matrix) <- heatmap_data$object_custom_name
 ```
+
+# Testing and Validation
 
 ## Data Validation
 
@@ -365,6 +387,20 @@ validation_result <- validate_tsv_structure(tsv_data, verbose = TRUE)
 if (!validation_result) {
   stop("Please fix validation errors before proceeding")
 }
+
+# Check for missing values in results
+missing_summary <- results %>%
+  summarise_all(~sum(is.na(.)))
+print(missing_summary)
+
+# Validate prevalence values
+invalid_prevalence <- results %>%
+  filter(patient_count < 0 | patient_count > 100)
+
+if (nrow(invalid_prevalence) > 0) {
+  warning("Found invalid prevalence values")
+  print(invalid_prevalence)
+}
 ```
 
 # Best Practices
@@ -373,7 +409,7 @@ if (!validation_result) {
 
 1. **Use appropriate time windows**: Avoid overly broad time ranges
 2. **Index your cohort table**: Ensure proper indexing on `subject_id` and `cohort_start_date`
-3. **Batch processing**: The package automatically handles batching for large analyses
+3. **Batch processing**: Process large TSV files in chunks if needed
 4. **Database resources**: Monitor database performance during large analyses
 
 ## Data Quality
@@ -416,11 +452,11 @@ if (!validation_result) {
 - Consider smaller time windows
 - Check database indexes
 - Monitor database resources
-- Use appropriate batch sizes
+- Process TSV file in smaller batches
 
 # Conclusion
 
-The `computeGaps` package provides a robust, database-sufficient solution for prevalence analysis in OMOP CDM environments. By following this guide, you can effectively analyze treatment gaps and test utilization patterns across different cohorts and time periods.
+The `computeGaps` package provides a robust solution for prevalence analysis in OMOP CDM environments. By following this guide, you can effectively analyze treatment gaps and test utilization patterns across different cohorts and time periods, with results returned as easy-to-analyze tibbles.
 
 For additional support:
 - Check the package documentation
