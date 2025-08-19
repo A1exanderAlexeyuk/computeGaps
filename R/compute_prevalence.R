@@ -111,9 +111,16 @@ compute_prevalence_from_tsv <- function(conn,
     spec_df2$days2 <- as.integer(spec_df2$days2)
   })
 
+  # Normalize time windows to ensure start <= end
+  spec_df2$w_start <- pmin(spec_df2$days1, spec_df2$days2, na.rm = TRUE)
+  spec_df2$w_end <- pmax(spec_df2$days1, spec_df2$days2, na.rm = TRUE)
+
+  # Create unique key for grouping
+  spec_df2$analysis_key <- paste(spec_df2$concept_id_2, spec_df2$w_start, spec_df2$w_end, sep = "_")
+
   # Distinct analysis rows to avoid duplicate queries
   analysis_rows <- spec_df2 |>
-    dplyr::select(cohortname, omop_object_domain, object_custom_name, concept_id_2, workflow_stage, days1, days2) |>
+    dplyr::select(cohortname, omop_object_domain, object_custom_name, concept_id_2, workflow_stage, w_start, w_end, analysis_key) |>
     dplyr::distinct()
 
   # 3) Compute counts from CDM
@@ -141,25 +148,61 @@ compute_prevalence_from_tsv <- function(conn,
   n_patients <- DatabaseConnector::querySql(conn, sql_n_pat, snakeCaseToCamelCase = TRUE)$N_PATIENTS[1]
   n_patients <- as.integer(n_patients %||% 0L)
 
-  results <- list()
+  # Group by domain for efficient querying
+  domain_groups <- analysis_rows |>
+    dplyr::group_by(omop_object_domain) |>
+    dplyr::group_split()
 
-  for (i in seq_len(nrow(analysis_rows))) {
-    row <- analysis_rows[i, ]
-    domain <- as.character(row$omop_object_domain)
+  all_results <- list()
+
+  for (domain_group in domain_groups) {
+    domain <- unique(domain_group$omop_object_domain)
     map <- domain_map[[domain]]
+    
     if (is.null(map)) {
-      warning(sprintf("Unsupported omop_object_domain '%s' in row %d; skipping", domain, i))
+      warning(sprintf("Unsupported omop_object_domain '%s'; skipping", domain))
       next
     }
 
-    days1 <- as.integer(row$days1 %||% 0L)
-    days2 <- as.integer(row$days2 %||% 0L)
-    # Normalize window to ensure days1 <= days2
-    w_start <- min(days1, days2, na.rm = TRUE)
-    w_end <- max(days1, days2, na.rm = TRUE)
+    # Get unique combinations of concept_id and time windows
+    unique_analyses <- domain_group |>
+      dplyr::select(concept_id_2, w_start, w_end) |>
+      dplyr::distinct() |>
+      dplyr::arrange(concept_id_2, w_start, w_end)
 
-    sql_tmpl <- (
-      "WITH cohort AS (\n         SELECT subject_id, cohort_start_date\n         FROM @cohort_schema.@cohort_table\n         {@cohort_definition_id != -999999} ? {WHERE cohort_definition_id = @cohort_definition_id} : {}\n       )\n       SELECT COUNT(DISTINCT c.subject_id) AS patient_count\n       FROM cohort c\n       JOIN @cdm_schema.@domain_table d\n         ON d.@concept_field = @concept_id\n        AND d.@date_field BETWEEN DATEADD(day, @w_start, c.cohort_start_date) AND DATEADD(day, @w_end, c.cohort_start_date)"
+    if (nrow(unique_analyses) == 0) next
+
+    # Build CASE WHEN statements for each unique analysis
+    case_statements <- purrr::pmap_chr(unique_analyses, function(concept_id_2, w_start, w_end) {
+      sprintf(
+        "SUM(CASE WHEN d.%s = %d AND d.%s BETWEEN DATEADD(day, %d, c.cohort_start_date) AND DATEADD(day, %d, c.cohort_start_date) THEN 1 ELSE 0 END) AS count_%d_%d_%d",
+        map$concept_field, concept_id_2, map$date_field, w_start, w_end, concept_id_2, w_start, w_end
+      )
+    })
+
+    # Get all unique concept_ids for IN clause
+    concept_ids <- unique(unique_analyses$concept_id_2)
+    concept_ids_str <- paste(concept_ids, collapse = ", ")
+
+    # Build the aggregated SQL query
+    sql_tmpl <- sprintf(
+      "WITH cohort AS (
+         SELECT subject_id, cohort_start_date
+         FROM @cohort_schema.@cohort_table
+         {@cohort_definition_id != -999999} ? {WHERE cohort_definition_id = @cohort_definition_id} : {}
+       )
+       SELECT 
+         c.subject_id,
+         %s
+       FROM cohort c
+       JOIN @cdm_schema.%s d
+         ON d.person_id = c.subject_id
+         AND d.%s IN (%s)
+       GROUP BY c.subject_id",
+      paste(case_statements, collapse = ",\n         "),
+      map$table,
+      map$concept_field,
+      concept_ids_str
     )
 
     sql_rendered <- SqlRender::render(
@@ -167,31 +210,46 @@ compute_prevalence_from_tsv <- function(conn,
       cohort_schema = cohort_schema,
       cohort_table = cohort_table,
       cohort_definition_id = ifelse(is.null(cohort_definition_id), -999999, cohort_definition_id),
-      cdm_schema = cdm_schema,
-      domain_table = map$table,
-      concept_field = map$concept_field,
-      date_field = map$date_field,
-      concept_id = as.integer(row$concept_id_2),
-      w_start = as.integer(w_start),
-      w_end = as.integer(w_end)
+      cdm_schema = cdm_schema
     )
     sql_exec <- SqlRender::translate(sql_rendered, targetDialect = attr(conn, "dbms") %||% DatabaseConnector::dbms(conn))
 
-    cnt <- DatabaseConnector::querySql(conn, sql_exec, snakeCaseToCamelCase = TRUE)$PATIENT_COUNT[1]
-    cnt <- as.integer(cnt %||% 0L)
+    # Execute query and get results
+    query_results <- DatabaseConnector::querySql(conn, sql_exec, snakeCaseToCamelCase = FALSE)
 
-    results[[length(results) + 1]] <- tibble::tibble(
-      cohortname = as.character(row$cohortname),
-      omop_object_domain = domain,
-      object_custom_name = as.character(row$object_custom_name),
-      `Workflow stage` = as.character(row$workflow_stage %||% NA_character_),
-      patient_count = cnt,
-      n_patients = n_patients,
-      n_patients_with_op = cnt
-    )
+    # Process results for each unique analysis
+    for (i in seq_len(nrow(unique_analyses))) {
+      row <- unique_analyses[i, ]
+      col_name <- sprintf("count_%d_%d_%d", row$concept_id_2, row$w_start, row$w_end)
+      
+      if (col_name %in% names(query_results)) {
+        # Count subjects with at least one occurrence
+        patient_count <- sum(query_results[[col_name]] > 0, na.rm = TRUE)
+      } else {
+        patient_count <- 0L
+      }
+
+      # Find all matching rows in domain_group for this combination
+      matching_rows <- domain_group |>
+        dplyr::filter(concept_id_2 == row$concept_id_2, w_start == row$w_start, w_end == row$w_end)
+
+      # Create result rows for each matching analysis
+      for (j in seq_len(nrow(matching_rows))) {
+        match_row <- matching_rows[j, ]
+        all_results[[length(all_results) + 1]] <- tibble::tibble(
+          cohortname = as.character(match_row$cohortname),
+          omop_object_domain = as.character(domain),
+          object_custom_name = as.character(match_row$object_custom_name),
+          `Workflow stage` = as.character(match_row$workflow_stage %||% NA_character_),
+          patient_count = as.integer(patient_count),
+          n_patients = n_patients,
+          n_patients_with_op = as.integer(patient_count)
+        )
+      }
+    }
   }
 
-  if (length(results) == 0) {
+  if (length(all_results) == 0) {
     return(tibble::tibble(
       cohortname = character(),
       omop_object_domain = character(),
@@ -203,5 +261,5 @@ compute_prevalence_from_tsv <- function(conn,
     ))
   }
 
-  dplyr::bind_rows(results)
+  dplyr::bind_rows(all_results)
 }
