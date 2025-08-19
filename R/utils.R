@@ -1,19 +1,3 @@
-#' Validate Database Connection
-#'
-#' @param connection Database connection object
-#' @return Logical. TRUE if connection is valid, FALSE otherwise
-#'
-#' @export
-validate_connection <- function(connection) {
-  tryCatch({
-    DatabaseConnector::querySql(connection, "SELECT 1")
-    return(TRUE)
-  }, error = function(e) {
-    warning("Database connection is not valid: ", e$message)
-    return(FALSE)
-  })
-}
-
 #' Validate TSV File Structure
 #'
 #' @param tsv_data Data frame containing TSV data
