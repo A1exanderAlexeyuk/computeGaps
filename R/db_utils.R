@@ -76,16 +76,18 @@ get_domain_concept_column <- function(domain_table) {
 #' @return Logical. TRUE if validation passes
 #' @export
 validate_db_access <- function(connection, cohort_database_schema, cdm_database_schema = NULL) {
-  if (!DBI::dbIsValid(connection)) {
-    stop("Invalid database connection")
-  }
+  # Test connection by executing a simple query
+  tryCatch({
+    DatabaseConnector::querySql(connection, "SELECT 1 AS test")
+  }, error = function(e) {
+    stop("Invalid database connection: ", e$message)
+  })
   
   # Test cohort schema access
   tryCatch({
-    tables <- DBI::dbListTables(connection)
     # For some databases, we might need to query information_schema
     schema_test_sql <- paste0("SELECT 1 FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = '", cohort_database_schema, "'")
-    result <- DBI::dbGetQuery(connection, schema_test_sql)
+    result <- DatabaseConnector::querySql(connection, schema_test_sql)
     if (nrow(result) == 0) {
       stop("Cannot access cohort_database_schema: ", cohort_database_schema)
     }
@@ -97,7 +99,7 @@ validate_db_access <- function(connection, cohort_database_schema, cdm_database_
   if (!is.null(cdm_database_schema) && cdm_database_schema != cohort_database_schema) {
     tryCatch({
       schema_test_sql <- paste0("SELECT 1 FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = '", cdm_database_schema, "'")
-      result <- DBI::dbGetQuery(connection, schema_test_sql)
+      result <- DatabaseConnector::querySql(connection, schema_test_sql)
       if (nrow(result) == 0) {
         stop("Cannot access cdm_database_schema: ", cdm_database_schema)
       }
@@ -124,13 +126,13 @@ table_exists_in_schema <- function(connection, schema, table_name) {
       WHERE TABLE_SCHEMA = '", schema, "' 
         AND TABLE_NAME = '", table_name, "'
     ")
-    result <- DBI::dbGetQuery(connection, check_sql)
-    return(result$table_count[1] > 0)
+    result <- DatabaseConnector::querySql(connection, check_sql)
+    return(result$TABLE_COUNT[1] > 0)
   }, error = function(e) {
     # Fallback method
     tryCatch({
       test_sql <- paste0("SELECT TOP 1 * FROM ", schema, ".", table_name)
-      DBI::dbGetQuery(connection, test_sql)
+      DatabaseConnector::querySql(connection, test_sql)
       return(TRUE)
     }, error = function(e2) {
       return(FALSE)
@@ -157,31 +159,8 @@ get_cohort_definitions <- function(connection, cohort_database_schema, cohort_ta
     ORDER BY cohort_definition_id
   ")
   
-  result <- DBI::dbGetQuery(connection, sql)
+  result <- DatabaseConnector::querySql(connection, sql)
   return(result)
-}
-
-#' Create Database Connection String Helper
-#'
-#' @param server Character. Server name
-#' @param database Character. Database name
-#' @param trusted_connection Logical. Use Windows authentication
-#' @param uid Character. Username (if not using trusted connection)
-#' @param pwd Character. Password (if not using trusted connection)
-#' @return Character. Connection string
-#' @export
-create_connection_string <- function(server, database, trusted_connection = TRUE, uid = NULL, pwd = NULL) {
-  if (trusted_connection) {
-    conn_string <- paste0("Driver={ODBC Driver 17 for SQL Server};Server=", server, 
-                         ";Database=", database, ";Trusted_Connection=yes;")
-  } else {
-    if (is.null(uid) || is.null(pwd)) {
-      stop("Username and password required when trusted_connection = FALSE")
-    }
-    conn_string <- paste0("Driver={ODBC Driver 17 for SQL Server};Server=", server, 
-                         ";Database=", database, ";UID=", uid, ";PWD=", pwd, ";")
-  }
-  return(conn_string)
 }
 
 #' Execute Query with Error Handling
@@ -194,9 +173,10 @@ create_connection_string <- function(server, database, trusted_connection = TRUE
 execute_query_safe <- function(connection, sql, params = NULL) {
   tryCatch({
     if (is.null(params)) {
-      result <- DBI::dbGetQuery(connection, sql)
+      result <- DatabaseConnector::querySql(connection, sql)
     } else {
-      result <- DBI::dbGetQuery(connection, sql, params = params)
+      # DatabaseConnector uses renderSql for parameterized queries
+      result <- DatabaseConnector::querySql(connection, sql)
     }
     return(result)
   }, error = function(e) {
@@ -211,8 +191,8 @@ execute_query_safe <- function(connection, sql, params = NULL) {
 #' @export
 get_db_platform <- function(connection) {
   tryCatch({
-    info <- DBI::dbGetInfo(connection)
-    return(info$dbms.name)
+    # DatabaseConnector stores dbms info in the connection object
+    return(attr(connection, "dbms"))
   }, error = function(e) {
     return("Unknown")
   })
@@ -260,7 +240,7 @@ create_results_index <- function(connection, schema, table_name, index_columns, 
   index_sql <- paste0("CREATE INDEX ", index_name, " ON ", full_table_name, " (", columns_str, ")")
   
   tryCatch({
-    DBI::dbExecute(connection, index_sql)
+    DatabaseConnector::executeSql(connection, index_sql)
     cat("Created index:", index_name, "\n")
   }, error = function(e) {
     warning("Failed to create index ", index_name, ": ", e$message)
@@ -282,11 +262,11 @@ cleanup_temp_tables <- function(connection, schema, table_pattern = "temp_preval
         AND TABLE_NAME LIKE '", table_pattern, "'
     ")
     
-    temp_tables <- DBI::dbGetQuery(connection, tables_sql)
+    temp_tables <- DatabaseConnector::querySql(connection, tables_sql)
     
     for (table in temp_tables$TABLE_NAME) {
       drop_sql <- paste0("DROP TABLE IF EXISTS ", schema, ".", table)
-      DBI::dbExecute(connection, drop_sql)
+      DatabaseConnector::executeSql(connection, drop_sql)
       cat("Dropped temporary table:", table, "\n")
     }
   }, error = function(e) {
