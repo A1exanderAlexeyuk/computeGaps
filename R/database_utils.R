@@ -13,7 +13,7 @@
 #' @keywords internal
 table_exists <- function(connection, schema, table_name) {
   tryCatch({
-    sql <- "SELECT 1 FROM {schema}.{table_name} WHERE 1=0"
+    sql <- "SELECT 1 FROM @schema.@table_name WHERE 1=0"
     sql <- SqlRender::render(sql, schema = schema, table_name = table_name)
     DatabaseConnector::querySql(connection, sql)
     return(TRUE)
@@ -30,7 +30,7 @@ table_exists <- function(connection, schema, table_name) {
 #'
 #' @keywords internal
 drop_table <- function(connection, schema, table_name) {
-  sql <- "DROP TABLE IF EXISTS {schema}.{table_name}"
+  sql <- "DROP TABLE IF EXISTS @schema.@table_name"
   sql <- SqlRender::render(sql, schema = schema, table_name = table_name)
   DatabaseConnector::executeSql(connection, sql)
 }
@@ -43,9 +43,12 @@ drop_table <- function(connection, schema, table_name) {
 #'
 #' @keywords internal
 create_results_table <- function(connection, schema, table_name) {
-  sql <- "
-  CREATE TABLE {schema}.{table_name} (
-    result_id BIGINT IDENTITY(1,1) PRIMARY KEY,
+  dbms <- DatabaseConnector::dbms(connection)
+
+  if (dbms == "redshift") {
+    sql <- "
+CREATE TABLE @schema.@table_name (
+    result_id BIGINT IDENTITY(1,1),
     cohortname VARCHAR(255) NOT NULL,
     omop_object_domain VARCHAR(50) NOT NULL,
     object_custom_name VARCHAR(255) NOT NULL,
@@ -58,10 +61,9 @@ create_results_table <- function(connection, schema, table_name) {
     days_around_index_1 INT NOT NULL,
     days_around_index_2 INT NOT NULL,
     analysis_date DATE NOT NULL,
-    created_timestamp DATETIME2 DEFAULT GETDATE()
-  )
-  "
-  
+    created_timestamp DATE
+)"
+  }
   sql <- SqlRender::render(sql, schema = schema, table_name = table_name)
   DatabaseConnector::executeSql(connection, sql)
 }
@@ -77,14 +79,14 @@ create_results_table <- function(connection, schema, table_name) {
 insert_results_to_db <- function(connection, cohort_database_schema, results_table_name, results_data) {
   # Prepare data for insertion
   results_data$created_timestamp <- Sys.time()
-  
+
   # Use DatabaseConnector to insert data
   DatabaseConnector::insertTable(
     connection = connection,
     tableName = paste0(cohort_database_schema, ".", results_table_name),
     data = results_data,
-    dropTableIfExists = FALSE,
-    createTable = FALSE,
+    dropTableIfExists = TRUE,
+    createTable = TRUE,
     tempTable = FALSE
   )
 }
@@ -98,13 +100,13 @@ insert_results_to_db <- function(connection, cohort_database_schema, results_tab
 #' @keywords internal
 create_results_indexes <- function(connection, schema, table_name) {
   indexes <- list(
-    "CREATE INDEX IX_{table_name}_cohortname ON {schema}.{table_name} (cohortname)",
-    "CREATE INDEX IX_{table_name}_domain ON {schema}.{table_name} (omop_object_domain)",
-    "CREATE INDEX IX_{table_name}_workflow ON {schema}.{table_name} (workflow_stage)",
-    "CREATE INDEX IX_{table_name}_concepts ON {schema}.{table_name} (concept_id_1, concept_id_2)",
-    "CREATE INDEX IX_{table_name}_analysis_date ON {schema}.{table_name} (analysis_date)"
+    "CREATE INDEX IX_@table_name_cohortname ON @schema.@table_name (cohortname)",
+    "CREATE INDEX IX_@table_name_domain ON @schema.@table_name (omop_object_domain)",
+    "CREATE INDEX IX_@table_name_workflow ON @schema.@table_name (workflow_stage)",
+    "CREATE INDEX IX_@table_name_concepts ON @schema.@table_name (concept_id_1, concept_id_2)",
+    "CREATE INDEX IX_@table_name_analysis_date ON @schema.@table_name (analysis_date)"
   )
-  
+
   for (index_sql in indexes) {
     sql <- SqlRender::render(index_sql, schema = schema, table_name = table_name)
     tryCatch({
@@ -124,7 +126,7 @@ create_results_indexes <- function(connection, schema, table_name) {
 #' @return Integer row count
 #' @keywords internal
 get_table_row_count <- function(connection, schema, table_name) {
-  sql <- "SELECT COUNT(*) as row_count FROM {schema}.{table_name}"
+  sql <- "SELECT COUNT(*) as row_count FROM @schema.@table_name"
   sql <- SqlRender::render(sql, schema = schema, table_name = table_name)
   result <- DatabaseConnector::querySql(connection, sql)
   return(result$ROW_COUNT[1])
@@ -140,7 +142,7 @@ validate_connection <- function(connection) {
   if (is.null(connection)) {
     stop("Database connection is NULL")
   }
-  
+
   tryCatch({
     # Test connection with simple query
     DatabaseConnector::querySql(connection, "SELECT 1 as test")
@@ -213,6 +215,6 @@ adapt_sql_for_platform <- function(sql, platform) {
     sql <- gsub("IDENTITY\\(1,1\\)", "", sql)
     sql <- gsub("DATETIME2", "TIMESTAMP", sql)
   }
-  
+
   return(sql)
 }

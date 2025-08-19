@@ -33,7 +33,7 @@ The `computeGaps` package provides a comprehensive solution for analyzing treatm
 
 ```{r installation}
 # Install from GitHub
-devtools::install_github("A1exanderAlexeyuk/computeGaps")
+# devtools::install_github("A1exanderAlexeyuk/computeGaps")
 
 # Load the package
 library(computeGaps)

@@ -48,7 +48,7 @@ prevalence analysis of diagnostic tests within specified time windows.
 \examples{
 \dontrun{
 # Example usage
-con <- DBI::dbConnect(...)
+con <- DatabaseConnector::connect(...)
 results <- analyze_prevalence_from_tsv(
   tsv_file_path = "data/cohort_data.tsv",
   connection = con,
