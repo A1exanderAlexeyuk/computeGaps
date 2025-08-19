@@ -187,6 +187,49 @@ concept_results <- analyze_concept_sets(
 print(concept_results$concept_set_summary)
 ```
 
+### Tibble-Only Spec-Driven Usage (No DB Writes)
+
+For read-only workflows or environments without write privileges, you can execute prevalence analyses from an in-memory specification tibble using compute_prevalence_from_spec_df. The spec_df encodes cohorts, concepts, domains, and time windows. The function performs read-only queries and returns results as tibbles without creating temp or permanent tables.
+
+```r
+library(computeGaps)
+library(DatabaseConnector)
+library(tibble)
+
+# Establish read-only database connection (example)
+connectionDetails <- createConnectionDetails(
+  dbms = "postgresql",
+  server = "your-omop-server/database",
+  user = "username",
+  password = "password"
+)
+con <- DatabaseConnector::connect(connectionDetails)
+
+# In-memory analysis specification (tibble)
+spec_df <- tibble::tibble(
+  analysis_id = "TIBBLE_ONLY_001",
+  cohort_table = "results.cohort",
+  cohort_id = 1001L,                        # single cohort
+  concept_id = c(3013721L, 3004249L),       # HbA1c and Glucose
+  domain_id = c("Measurement", "Measurement"),
+  start_day = -30L,                          # window relative to index
+  end_day = 30L,
+  include_descendants = TRUE
+)
+
+# Execute spec-driven prevalence without any DB writes
+spec_results <- compute_prevalence_from_spec_df(
+  connection = con,
+  spec_df = spec_df,
+  write_results = FALSE,          # ensure no permanent writes
+  use_temp_tables = FALSE,        # avoid temp objects
+  collect = TRUE                  # return results as in-memory tibbles
+)
+
+# Inspect results tibble(s)
+print(spec_results$results)
+```
+
 ## Advanced Usage
 
 ### Temporal Trend Analysis
