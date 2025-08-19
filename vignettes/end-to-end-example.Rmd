@@ -1,0 +1,425 @@
+---
+title: "End-to-End Example: Prevalence Analysis with DatabaseConnector"
+author: "computeGaps Package"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{End-to-End Example: Prevalence Analysis with DatabaseConnector}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  eval = FALSE
+)
+```
+
+# Introduction
+
+This vignette provides a complete end-to-end example of using the `computeGaps` package to analyze the prevalence of diagnostic tests and procedures in OMOP CDM cohorts. The package now uses only `DatabaseConnector` for all database operations, providing JDBC connectivity without requiring ODBC drivers.
+
+## Overview
+
+The analysis workflow consists of:
+
+1. **Database Connection** - Connect to your OMOP CDM database using JDBC
+2. **Input Preparation** - Create or prepare TSV files with analysis specifications
+3. **Prevalence Analysis** - Calculate test/procedure prevalence within time windows
+4. **Results Storage** - Store results in database tables
+5. **Query & Export** - Query results and export to various formats
+
+# Complete Example
+
+## Step 1: Setup and Database Connection
+
+```{r connection}
+# Load required packages
+library(computeGaps)
+library(DatabaseConnector)
+
+# Create database connection using JDBC
+# Example for PostgreSQL
+connection <- DatabaseConnector::connect(
+  dbms = "postgresql",
+  server = "localhost/omop_cdm",
+  user = "your_username",
+  password = "your_password",
+  port = 5432
+)
+
+# Example for SQL Server
+# connection <- DatabaseConnector::connect(
+#   dbms = "sql server",
+#   server = "your_server_name",
+#   database = "your_database_name",
+#   user = "your_username",
+#   password = "your_password",
+#   port = 1433
+# )
+
+# Example for Oracle
+# connection <- DatabaseConnector::connect(
+#   dbms = "oracle",
+#   server = "your_server_name/your_service_name",
+#   user = "your_username",
+#   password = "your_password",
+#   port = 1521
+# )
+
+# Verify connection
+DatabaseConnector::getTableNames(connection, "cdm_schema")
+```
+
+## Step 2: Prepare Input Data
+
+The analysis requires a TSV file with the following structure:
+
+```{r input_structure}
+# Example TSV structure
+example_data <- data.frame(
+  cohortname = "Reference IBD Ulcerative colitis_InsightsGateway",
+  concept_id_1 = 81893,
+  relationship_id = "Has diagnostic test",
+  concept_id_2 = 606840,
+  omop_object_domain = "Procedure",
+  object_custom_name = "Computed tomography of abdomen and pelvis",
+  object_custom_code = "DxTest52",
+  predicate_metadata = '{"Workflow stage": "Confirmatory Diagnosis", "time_gap_in_days": 7, "days_around_index_1": -14, "days_around_index_2": 0}'
+)
+
+# Create sample TSV file
+sample_file <- "prevalence_analysis_input.tsv"
+readr::write_tsv(example_data, sample_file)
+```
+
+### Understanding the Input Format
+
+- **cohortname**: Identifier for your cohort (e.g., disease cohort name)
+- **concept_id_1**: Cohort concept ID (for reference)
+- **concept_id_2**: OMOP concept ID for the test/procedure to analyze
+- **omop_object_domain**: OMOP domain (Procedure, Measurement, etc.)
+- **object_custom_name**: Human-readable name for the test/procedure
+- **predicate_metadata**: JSON with time window specifications:
+  - `days_around_index_1`: Start of window (negative = before index)
+  - `days_around_index_2`: End of window (positive = after index)
+  - `Workflow stage`: Analysis stage identifier
+
+## Step 3: Run Prevalence Analysis
+
+```{r analysis}
+# Define database schemas
+cohort_database_schema <- "results_schema"  # Where cohort table is located
+cdm_database_schema <- "cdm_schema"         # Where OMOP CDM tables are located
+
+# Run the analysis
+results_table <- analyze_prevalence_from_tsv_db(
+  tsv_file_path = sample_file,
+  connection = connection,
+  cohort_database_schema = cohort_database_schema,
+  cohort_table_name = "cohort",
+  cdm_database_schema = cdm_database_schema,
+  results_table_name = "prevalence_results",
+  overwrite_results = TRUE,
+  create_indexes = TRUE,
+  verbose = TRUE
+)
+
+# The function will:
+# 1. Read and validate the TSV file
+# 2. Parse the JSON metadata
+# 3. Query the cohort table for patient counts
+# 4. Query domain tables for test/procedure occurrences
+# 5. Calculate prevalence percentages
+# 6. Store results in the database
+```
+
+## Step 4: Query and Analyze Results
+
+```{r query_results}
+# Query all results
+all_results <- query_prevalence_results(
+  connection = connection,
+  cohort_database_schema = cohort_database_schema,
+  results_table_name = "prevalence_results"
+)
+
+# View results structure
+print(head(all_results))
+
+# Get summary statistics
+summary_stats <- get_results_summary(
+  connection = connection,
+  cohort_database_schema = cohort_database_schema,
+  results_table_name = "prevalence_results"
+)
+
+print(summary_stats)
+
+# Filter high prevalence tests (>= 10%)
+high_prevalence <- query_prevalence_results(
+  connection = connection,
+  cohort_database_schema = cohort_database_schema,
+  results_table_name = "prevalence_results",
+  min_prevalence = 10.0,
+  order_by = "patient_count DESC"
+)
+
+# Results by workflow stage
+workflow_summary <- get_results_by_workflow_stage(
+  connection = connection,
+  cohort_database_schema = cohort_database_schema,
+  results_table_name = "prevalence_results"
+)
+```
+
+## Step 5: Export Results
+
+```{r export}
+# Export to CSV
+export_results_to_file(
+  connection = connection,
+  cohort_database_schema = cohort_database_schema,
+  results_table_name = "prevalence_results",
+  output_path = "prevalence_results.csv",
+  format = "csv"
+)
+
+# Export to Excel with summary
+export_results_to_file(
+  connection = connection,
+  cohort_database_schema = cohort_database_schema,
+  results_table_name = "prevalence_results",
+  output_path = "prevalence_results_with_summary.xlsx",
+  format = "xlsx",
+  include_summary = TRUE
+)
+```
+
+# Understanding Results
+
+## Output Table Structure
+
+The results table contains:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `cohortname` | VARCHAR | Cohort identifier from input |
+| `omop_object_domain` | VARCHAR | OMOP domain (Procedure, Measurement, etc.) |
+| `object_custom_name` | VARCHAR | Test/procedure name |
+| `workflow_stage` | VARCHAR | Analysis stage from metadata |
+| `n_patients` | BIGINT | Total patients in cohort |
+| `n_patients_with_op` | BIGINT | Patients with test/procedure |
+| `patient_count` | DECIMAL | **Prevalence percentage** |
+| `days_around_index_1` | INT | Start of time window |
+| `days_around_index_2` | INT | End of time window |
+
+## Interpreting Prevalence
+
+- **patient_count**: The percentage of cohort patients who had the test/procedure
+- **n_patients**: Total cohort size
+- **n_patients_with_op**: Count of patients with at least one occurrence
+
+Example: If `patient_count = 25.5`, this means 25.5% of patients in the cohort had this test/procedure within the specified time window.
+
+# Advanced Examples
+
+## Multiple Time Windows
+
+Analyze the same test across different time periods:
+
+```{r multiple_windows}
+# Create input with multiple time windows
+multi_window_data <- data.frame(
+  cohortname = rep("IBD Cohort", 3),
+  concept_id_1 = rep(81893, 3),
+  relationship_id = rep("Has diagnostic test", 3),
+  concept_id_2 = rep(606840, 3),
+  omop_object_domain = rep("Procedure", 3),
+  object_custom_name = rep("CT Abdomen/Pelvis", 3),
+  object_custom_code = rep("DxTest52", 3),
+  predicate_metadata = c(
+    '{"Workflow stage": "Pre-diagnosis", "days_around_index_1": -90, "days_around_index_2": -31}',
+    '{"Workflow stage": "Peri-diagnosis", "days_around_index_1": -30, "days_around_index_2": 30}',
+    '{"Workflow stage": "Post-diagnosis", "days_around_index_1": 31, "days_around_index_2": 90}'
+  )
+)
+
+readr::write_tsv(multi_window_data, "multi_window_analysis.tsv")
+
+# Run analysis
+analyze_prevalence_from_tsv_db(
+  tsv_file_path = "multi_window_analysis.tsv",
+  connection = connection,
+  cohort_database_schema = cohort_database_schema,
+  cohort_table_name = "cohort",
+  results_table_name = "temporal_prevalence_results"
+)
+```
+
+## Multiple Domains
+
+Analyze tests across different OMOP domains:
+
+```{r multiple_domains}
+# Create input with multiple domains
+multi_domain_data <- data.frame(
+  cohortname = rep("Diabetes Cohort", 4),
+  concept_id_1 = rep(201826, 4),
+  relationship_id = rep("Has test", 4),
+  concept_id_2 = c(3013721, 3004249, 4304593, 1503297),
+  omop_object_domain = c("Measurement", "Measurement", "Procedure", "Drug"),
+  object_custom_name = c("HbA1c", "Glucose", "Eye Exam", "Metformin"),
+  object_custom_code = c("Lab1", "Lab2", "Proc1", "Drug1"),
+  predicate_metadata = rep('{"Workflow stage": "Routine Care", "days_around_index_1": -180, "days_around_index_2": 180}', 4)
+)
+
+readr::write_tsv(multi_domain_data, "multi_domain_analysis.tsv")
+```
+
+## Batch Processing Multiple Cohorts
+
+```{r batch_processing}
+# Process multiple cohorts
+cohorts <- c("IBD_UC", "IBD_Crohn", "Diabetes_T2", "Hypertension")
+
+for (cohort in cohorts) {
+  # Create cohort-specific input
+  cohort_data <- create_cohort_analysis_spec(cohort)
+  
+  # Run analysis
+  results_table <- paste0("prevalence_", tolower(cohort))
+  
+  analyze_prevalence_from_tsv_db(
+    tsv_file_path = paste0(cohort, "_analysis.tsv"),
+    connection = connection,
+    cohort_database_schema = cohort_database_schema,
+    cohort_table_name = "cohort",
+    results_table_name = results_table,
+    verbose = TRUE
+  )
+}
+
+# Combine results
+combined_results <- DatabaseConnector::querySql(
+  connection,
+  "SELECT * FROM results_schema.prevalence_ibd_uc
+   UNION ALL
+   SELECT * FROM results_schema.prevalence_ibd_crohn
+   UNION ALL
+   SELECT * FROM results_schema.prevalence_diabetes_t2
+   UNION ALL
+   SELECT * FROM results_schema.prevalence_hypertension"
+)
+```
+
+# Best Practices
+
+## 1. Database Connection
+
+- Use JDBC connections via DatabaseConnector for better compatibility
+- Test connection before running analysis
+- Use appropriate connection pooling for large analyses
+
+## 2. Input Data Preparation
+
+- Validate concept IDs exist in your CDM
+- Use appropriate time windows for clinical context
+- Group related tests using workflow stages
+
+## 3. Performance Optimization
+
+- Create indexes on cohort tables (`subject_id`, `cohort_start_date`)
+- Use reasonable time windows to limit data scanned
+- Process large cohorts in batches if needed
+
+## 4. Result Interpretation
+
+- Consider cohort size when interpreting prevalence
+- Account for data completeness in your CDM
+- Compare prevalence across time windows for insights
+
+# Troubleshooting
+
+## Common Issues and Solutions
+
+### Connection Issues
+
+```{r troubleshoot_connection}
+# Test connection
+tryCatch({
+  DatabaseConnector::querySql(connection, "SELECT 1 as test")
+  message("Connection successful!")
+}, error = function(e) {
+  message("Connection failed: ", e$message)
+})
+
+# Check available schemas
+schemas <- DatabaseConnector::querySql(
+  connection,
+  "SELECT DISTINCT TABLE_SCHEMA FROM INFORMATION_SCHEMA.TABLES"
+)
+print(schemas)
+```
+
+### No Results Found
+
+```{r troubleshoot_results}
+# Check cohort table
+cohort_count <- DatabaseConnector::querySql(
+  connection,
+  "SELECT COUNT(*) as count FROM results_schema.cohort"
+)
+message("Cohort table has ", cohort_count$count, " records")
+
+# Check concept existence
+concept_check <- DatabaseConnector::querySql(
+  connection,
+  "SELECT concept_id, concept_name, domain_id 
+   FROM cdm_schema.concept 
+   WHERE concept_id IN (606840, 3013721)"
+)
+print(concept_check)
+```
+
+### Performance Issues
+
+```{r troubleshoot_performance}
+# Check table sizes
+table_sizes <- DatabaseConnector::querySql(
+  connection,
+  "SELECT 
+     table_name,
+     table_rows
+   FROM INFORMATION_SCHEMA.TABLES
+   WHERE table_schema = 'cdm_schema'
+     AND table_name IN ('procedure_occurrence', 'measurement')"
+)
+print(table_sizes)
+
+# Create missing indexes
+DatabaseConnector::executeSql(
+  connection,
+  "CREATE INDEX idx_cohort_subject_date 
+   ON results_schema.cohort(subject_id, cohort_start_date)"
+)
+```
+
+# Conclusion
+
+This vignette demonstrated a complete workflow for prevalence analysis using the `computeGaps` package with DatabaseConnector. The package provides:
+
+- **JDBC-only connectivity** without ODBC dependencies
+- **Flexible time window analysis** around cohort index dates
+- **Multi-domain support** for all OMOP CDM domains
+- **Database-stored results** for persistence and sharing
+- **Rich querying capabilities** for result exploration
+
+For more examples and advanced usage, see the package documentation and additional vignettes.
+
+```{r cleanup}
+# Always disconnect when finished
+DatabaseConnector::disconnect(connection)
+```
