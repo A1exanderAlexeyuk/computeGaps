@@ -113,24 +113,45 @@ compute_prevalence_from_spec_df <- function(conn,
   n_patients <- DatabaseConnector::querySql(conn, sql_n_pat, snakeCaseToCamelCase = TRUE)$N_PATIENTS[1]
   n_patients <- as.integer(n_patients %||% 0L)
 
-  # Prepare unique analysis rows
-  analysis_rows <- spec_df2 |>
-    dplyr::select(cohortname, omop_object_domain, object_custom_name, concept_id_2, workflow_stage, days1, days2) |>
-    dplyr::distinct()
+  # Prepare analysis rows with unique identifiers
+  spec_df2 <- spec_df2 |>
+    dplyr::mutate(
+      w_start = pmin(days1 %||% 0L, days2 %||% 0L, na.rm = TRUE),
+      w_end = pmax(days1 %||% 0L, days2 %||% 0L, na.rm = TRUE),
+      analysis_id = dplyr::row_number()
+    )
 
-  results <- list()
+  # Group by domain
+  domain_groups <- spec_df2 |>
+    dplyr::group_by(omop_object_domain) |>
+    dplyr::group_split()
 
-  for (i in seq_len(nrow(analysis_rows))) {
-    row <- analysis_rows[i, ]
-    domain <- as.character(row$omop_object_domain)
+  all_results <- list()
+
+  for (domain_data in domain_groups) {
+    domain <- unique(domain_data$omop_object_domain)
     map <- domain_map[[domain]]
     if (is.null(map)) {
-      warning(sprintf("Unsupported omop_object_domain '%s' in row %d; skipping", domain, i))
+      warning(sprintf("Unsupported omop_object_domain '%s'; skipping", domain))
       next
     }
 
-    w_start <- min(as.integer(row$days1 %||% 0L), as.integer(row$days2 %||% 0L), na.rm = TRUE)
-    w_end   <- max(as.integer(row$days1 %||% 0L), as.integer(row$days2 %||% 0L), na.rm = TRUE)
+    # Get unique combinations of concept_id and time windows
+    unique_combos <- domain_data |>
+      dplyr::select(concept_id_2, w_start, w_end) |>
+      dplyr::distinct() |>
+      dplyr::mutate(combo_id = dplyr::row_number())
+
+    if (nrow(unique_combos) == 0) next
+
+    # Build CASE WHEN statements
+    case_statements <- purrr::map2_chr(unique_combos$combo_id, seq_len(nrow(unique_combos)), function(combo_id, idx) {
+      row <- unique_combos[idx, ]
+      sprintf(
+        "WHEN d.@concept_field = %d AND d.@date_field BETWEEN DATEADD(day, %d, c.cohort_start_date) AND DATEADD(day, %d, c.cohort_start_date) THEN %d",
+        row$concept_id_2, row$w_start, row$w_end, combo_id
+      )
+    })
 
     # Base cohort CTE
     cohort_cte <- "\n      WITH cohort AS (\n        SELECT subject_id, cohort_start_date\n        FROM @cohort_schema.@cohort_table\n        {@cohort_definition_id != -999999} ? {WHERE cohort_definition_id = @cohort_definition_id} : {}\n      )\n    "
@@ -144,40 +165,80 @@ compute_prevalence_from_spec_df <- function(conn,
       ""
     }
 
+    # Build IN clause for concept_ids
+    concept_ids <- unique(unique_combos$concept_id_2)
+    concept_ids_str <- paste(concept_ids, collapse = ", ")
+
+    # Build SQL query with CASE WHEN
     sql_tmpl <- paste0(
-      cohort_cte, "\n      SELECT COUNT(DISTINCT c.subject_id) AS patient_count\n      FROM cohort c\n      JOIN @cdm_schema.@domain_table d\n        ON d.@concept_field = @concept_id\n       AND d.@date_field BETWEEN DATEADD(day, @w_start, c.cohort_start_date)\n                             AND DATEADD(day, @w_end,   c.cohort_start_date)\n      ", obs_join
+      cohort_cte, "\n      SELECT \n        CASE\n          ", paste(case_statements, collapse = "\n          "), "\n          ELSE NULL\n        END AS combo_id,\n        c.subject_id\n      FROM cohort c\n      JOIN @cdm_schema.@domain_table d\n        ON d.person_id = c.subject_id\n       AND d.@concept_field IN (", concept_ids_str, ")\n      ", obs_join, "\n      WHERE\n        CASE\n          ", paste(case_statements, collapse = "\n          "), "\n          ELSE NULL\n        END IS NOT NULL\n    "
+    )
+
+    # Wrap in aggregation query
+    sql_final <- paste0(
+      "WITH base_data AS (\n", sql_tmpl, "\n)\nSELECT combo_id, COUNT(DISTINCT subject_id) AS patient_count\nFROM base_data\nGROUP BY combo_id"
     )
 
     sql_rendered <- SqlRender::render(
-      sql_tmpl,
+      sql_final,
       cohort_schema = cohort_schema,
       cohort_table = cohort_table,
       cohort_definition_id = ifelse(is.null(cohort_definition_id), -999999, cohort_definition_id),
       cdm_schema = cdm_schema,
       domain_table = map$table,
       concept_field = map$concept_field,
-      date_field = map$date_field,
-      concept_id = as.integer(row$concept_id_2),
-      w_start = as.integer(w_start),
-      w_end = as.integer(w_end)
+      date_field = map$date_field
     )
     sql_exec <- SqlRender::translate(sql_rendered, targetDialect = attr(conn, "dbms") %||% DatabaseConnector::dbms(conn))
 
-    cnt <- DatabaseConnector::querySql(conn, sql_exec, snakeCaseToCamelCase = TRUE)$PATIENT_COUNT[1]
-    cnt <- as.integer(cnt %||% 0L)
+    # Execute query
+    query_results <- DatabaseConnector::querySql(conn, sql_exec, snakeCaseToCamelCase = TRUE)
 
-    results[[length(results) + 1]] <- tibble::tibble(
-      cohortname = as.character(row$cohortname),
-      omop_object_domain = domain,
-      object_custom_name = as.character(row$object_custom_name),
-      `Workflow stage` = as.character(row$workflow_stage %||% NA_character_),
-      patient_count = cnt,
-      n_patients = n_patients,
-      n_patients_with_op = cnt
-    )
+    if (nrow(query_results) > 0) {
+      # Join results back to unique_combos
+      combo_results <- unique_combos |>
+        dplyr::left_join(query_results |> dplyr::rename(combo_id = COMBO_ID, patient_count = PATIENT_COUNT), by = "combo_id") |>
+        dplyr::mutate(patient_count = dplyr::coalesce(patient_count, 0L))
+
+      # Join back to original domain_data to get all metadata
+      final_results <- domain_data |>
+        dplyr::left_join(combo_results, by = c("concept_id_2", "w_start", "w_end")) |>
+        dplyr::mutate(patient_count = dplyr::coalesce(patient_count, 0L)) |>
+        dplyr::select(
+          cohortname,
+          omop_object_domain,
+          object_custom_name,
+          workflow_stage,
+          patient_count
+        ) |>
+        dplyr::rename(`Workflow stage` = workflow_stage) |>
+        dplyr::mutate(
+          n_patients = n_patients,
+          n_patients_with_op = patient_count
+        )
+
+      all_results[[length(all_results) + 1]] <- final_results
+    } else {
+      # No results for this domain - create zero counts
+      final_results <- domain_data |>
+        dplyr::select(
+          cohortname,
+          omop_object_domain,
+          object_custom_name,
+          workflow_stage
+        ) |>
+        dplyr::rename(`Workflow stage` = workflow_stage) |>
+        dplyr::mutate(
+          patient_count = 0L,
+          n_patients = n_patients,
+          n_patients_with_op = 0L
+        )
+
+      all_results[[length(all_results) + 1]] <- final_results
+    }
   }
 
-  if (length(results) == 0) {
+  if (length(all_results) == 0) {
     return(tibble::tibble(
       cohortname = character(),
       omop_object_domain = character(),
@@ -189,5 +250,5 @@ compute_prevalence_from_spec_df <- function(conn,
     ))
   }
 
-  dplyr::bind_rows(results)
+  dplyr::bind_rows(all_results)
 }
