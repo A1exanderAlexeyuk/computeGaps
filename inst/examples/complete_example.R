@@ -4,25 +4,31 @@
 # using the computeGaps package with database storage.
 
 library(computeGaps)
-library(DBI)
+library(DatabaseConnector)
 
 # =============================================================================
 # STEP 1: Setup Database Connection
 # =============================================================================
 
 # Example connection setup (adjust for your environment)
-# For SQL Server with Windows Authentication:
-connection_string <- create_connection_string(
+# For SQL Server:
+connectionDetails <- createConnectionDetails(
+  dbms = "sql server",
   server = "your_server_name",
-  database = "your_database_name",
-  trusted_connection = TRUE
+  user = "your_username",
+  password = "your_password",
+  pathToDriver = "path/to/jdbc/driver"
 )
 
 # Establish connection (uncomment and modify as needed)
-# con <- DBI::dbConnect(odbc::odbc(), .connection_string = connection_string)
+# con <- DatabaseConnector::connect(connectionDetails)
 
 # For testing purposes, you can also use:
-# con <- DBI::dbConnect(RSQLite::SQLite(), ":memory:")
+# connectionDetails <- createConnectionDetails(
+#   dbms = "sqlite",
+#   server = ":memory:"
+# )
+# con <- DatabaseConnector::connect(connectionDetails)
 
 # =============================================================================
 # STEP 2: Create Sample Data for Testing
@@ -145,7 +151,7 @@ if (file.exists(sample_file)) {
 }
 
 # Close database connection (uncomment when using real database)
-# DBI::dbDisconnect(con)
+# DatabaseConnector::disconnect(con)
 
 cat("\n=== Example Complete ===\n")
 cat("To run with a real database:\n")
