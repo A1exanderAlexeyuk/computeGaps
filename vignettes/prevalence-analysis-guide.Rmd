@@ -1,0 +1,388 @@
+---
+title: "Prevalence Analysis Guide"
+author: "computeGaps Package"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Prevalence Analysis Guide}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  eval = FALSE
+)
+```
+
+# Introduction
+
+The `computeGaps` package provides a comprehensive solution for analyzing treatment gaps and test utilization patterns in OMOP Common Data Model (CDM) cohorts. This guide walks through the complete workflow from data preparation to result analysis.
+
+## Key Features
+
+- **Database-Sufficient Analysis**: All computations performed using SQL queries
+- **Database Result Storage**: Results stored in `cohort_database_schema` for persistence  
+- **TSV Configuration**: Flexible input format with JSON metadata
+- **OMOP CDM Compatible**: Works with standard OMOP domains
+- **Time Window Analysis**: Configurable time periods around index dates
+
+# Installation and Setup
+
+```{r installation}
+# Install from GitHub
+devtools::install_github("A1exanderAlexeyuk/computeGaps")
+
+# Load the package
+library(computeGaps)
+library(DatabaseConnector)
+```
+
+# Database Connection
+
+```{r connection}
+# SQL Server example
+connection <- DatabaseConnector::connect(
+  dbms = "sql server",
+  server = "your_server_name",
+  database = "your_database_name", 
+  user = "your_username",
+  password = "your_password"
+)
+
+# PostgreSQL example
+connection <- DatabaseConnector::connect(
+  dbms = "postgresql",
+  server = "your_server/your_database",
+  user = "your_username", 
+  password = "your_password"
+)
+```
+
+# Input Data Format
+
+The package expects TSV files with specific columns and JSON metadata:
+
+## Required Columns
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `cohortname` | Character | Cohort identifier |
+| `concept_id_1` | Numeric | Cohort concept ID |
+| `concept_id_2` | Numeric | Test/procedure concept ID |
+| `omop_object_domain` | Character | OMOP domain |
+| `object_custom_name` | Character | Test/procedure name |
+| `predicate_metadata` | Character | JSON with time windows |
+
+## JSON Metadata Format
+
+```json
+{
+  "Workflow stage": "Confirmatory Diagnosis",
+  "time_gap_in_days": 7,
+  "days_around_index_1": -14,
+  "days_around_index_2": 0
+}
+```
+
+- `days_around_index_1`: Start of time window (negative = before index date)
+- `days_around_index_2`: End of time window (positive = after index date)
+
+# Creating Sample Data
+
+```{r sample_data}
+# Create sample TSV file
+sample_file <- create_sample_tsv("sample_analysis.tsv", n_rows = 5)
+
+# Validate the structure
+tsv_data <- read_and_validate_tsv("sample_analysis.tsv")
+validation_result <- validate_tsv_structure(tsv_data, verbose = TRUE)
+```
+
+# Running Prevalence Analysis
+
+## Basic Analysis
+
+```{r basic_analysis}
+# Run prevalence analysis
+results_table <- analyze_prevalence_from_tsv_db(
+  tsv_file_path = "sample_analysis.tsv",
+  connection = connection,
+  cohort_database_schema = "results_schema",
+  cohort_table_name = "cohort",
+  cdm_database_schema = "cdm_schema"
+)
+```
+
+## Complete Workflow
+
+```{r complete_workflow}
+# Run complete analysis with automatic reporting
+analysis_results <- run_complete_prevalence_analysis(
+  tsv_file_path = "sample_analysis.tsv",
+  connection = connection,
+  cohort_database_schema = "results_schema", 
+  cohort_table_name = "cohort",
+  cdm_database_schema = "cdm_schema",
+  output_dir = "results"
+)
+```
+
+# Querying Results
+
+## Basic Queries
+
+```{r basic_queries}
+# Get all results
+all_results <- query_prevalence_results(
+  connection = connection,
+  cohort_database_schema = "results_schema",
+  results_table_name = "prevalence_analysis_results"
+)
+
+# Get summary statistics
+summary_stats <- get_results_summary(
+  connection = connection,
+  cohort_database_schema = "results_schema", 
+  results_table_name = "prevalence_analysis_results"
+)
+```
+
+## Filtered Queries
+
+```{r filtered_queries}
+# Filter by high prevalence (>= 10%)
+high_prevalence <- query_prevalence_results(
+  connection = connection,
+  cohort_database_schema = "results_schema",
+  results_table_name = "prevalence_analysis_results",
+  min_prevalence = 10.0
+)
+
+# Filter by workflow stage
+confirmatory_results <- query_prevalence_results(
+  connection = connection,
+  cohort_database_schema = "results_schema",
+  results_table_name = "prevalence_analysis_results", 
+  workflow_stage = "Confirmatory Diagnosis"
+)
+
+# Filter by domain
+procedure_results <- query_prevalence_results(
+  connection = connection,
+  cohort_database_schema = "results_schema",
+  results_table_name = "prevalence_analysis_results",
+  domain = "Procedure"
+)
+```
+
+## Summary Analyses
+
+```{r summary_analyses}
+# Results by cohort
+cohort_summary <- get_results_by_cohort(
+  connection = connection,
+  cohort_database_schema = "results_schema",
+  results_table_name = "prevalence_analysis_results"
+)
+
+# Results by workflow stage
+workflow_summary <- get_results_by_workflow_stage(
+  connection = connection,
+  cohort_database_schema = "results_schema", 
+  results_table_name = "prevalence_analysis_results"
+)
+```
+
+# Exporting Results
+
+## File Exports
+
+```{r exports}
+# Export to TSV
+export_results_to_file(
+  connection = connection,
+  cohort_database_schema = "results_schema",
+  results_table_name = "prevalence_analysis_results",
+  output_path = "prevalence_results.tsv",
+  format = "tsv"
+)
+
+# Export to Excel with summary
+export_results_to_file(
+  connection = connection,
+  cohort_database_schema = "results_schema",
+  results_table_name = "prevalence_analysis_results", 
+  output_path = "results_with_summary.xlsx",
+  format = "xlsx",
+  include_summary = TRUE
+)
+
+# Export filtered results
+export_results_to_file(
+  connection = connection,
+  cohort_database_schema = "results_schema",
+  results_table_name = "prevalence_analysis_results",
+  output_path = "high_prevalence.tsv", 
+  format = "tsv",
+  filters = list(min_prevalence = 10.0)
+)
+```
+
+# Understanding Results
+
+## Output Structure
+
+The results table contains:
+
+| Column | Description |
+|--------|-------------|
+| `cohortname` | Cohort identifier |
+| `omop_object_domain` | OMOP domain |
+| `object_custom_name` | Test/procedure name |
+| `workflow_stage` | Workflow stage |
+| `n_patients` | Total patients in cohort |
+| `n_patients_with_op` | Patients with test/procedure |
+| `patient_count` | **Prevalence percentage** |
+
+## Interpreting Prevalence
+
+- `patient_count` represents the percentage of patients in the cohort who had the specific test/procedure within the defined time window
+- `n_patients` is the total cohort size
+- `n_patients_with_op` is the count of patients who had the test/procedure
+
+Example: If `patient_count = 25.5`, this means 25.5% of patients in the cohort had this test/procedure.
+
+# Advanced Features
+
+## Custom Time Windows
+
+Modify the `predicate_metadata` in your TSV file:
+
+```json
+{
+  "Workflow stage": "Extended Follow-up",
+  "days_around_index_1": -90,
+  "days_around_index_2": 180
+}
+```
+
+This analyzes tests from 90 days before to 180 days after the index date.
+
+## Multiple Workflow Stages
+
+The same test can be analyzed across different stages by including multiple rows with different metadata:
+
+```
+cohortname	concept_id_1	concept_id_2	...	predicate_metadata
+IBD Cohort	81893	606840	...	{"Workflow stage": "Initial", "days_around_index_1": -30, "days_around_index_2": 0}
+IBD Cohort	81893	606840	...	{"Workflow stage": "Follow-up", "days_around_index_1": 30, "days_around_index_2": 90}
+```
+
+# Supported OMOP Domains
+
+The package supports these OMOP domains:
+
+- **Procedure** (`procedure_occurrence`)
+- **Measurement** (`measurement`) 
+- **Condition** (`condition_occurrence`)
+- **Drug** (`drug_exposure`)
+- **Device** (`device_exposure`)
+- **Observation** (`observation`)
+
+# Testing and Validation
+
+## Quick Test
+
+```{r testing}
+# Run quick functionality test
+test_result <- quick_prevalence_test(
+  connection = connection,
+  cohort_database_schema = "test_schema"
+)
+
+# Setup test environment
+setup_success <- setup_test_database(
+  connection = connection,
+  cohort_database_schema = "test_schema",
+  create_sample_cohort = TRUE
+)
+```
+
+## Data Validation
+
+```{r validation}
+# Validate TSV structure before analysis
+tsv_data <- read_and_validate_tsv("your_data.tsv")
+validation_result <- validate_tsv_structure(tsv_data, verbose = TRUE)
+
+if (!validation_result) {
+  stop("Please fix validation errors before proceeding")
+}
+```
+
+# Best Practices
+
+## Performance Optimization
+
+1. **Use appropriate time windows**: Avoid overly broad time ranges
+2. **Index your cohort table**: Ensure proper indexing on `subject_id` and `cohort_start_date`
+3. **Batch processing**: The package automatically handles batching for large analyses
+4. **Database resources**: Monitor database performance during large analyses
+
+## Data Quality
+
+1. **Validate input data**: Always run `validate_tsv_structure()` first
+2. **Check concept IDs**: Ensure concept IDs exist in your CDM
+3. **Review time windows**: Verify `days_around_index_1` and `days_around_index_2` make sense
+4. **Monitor results**: Check for unexpected prevalence patterns
+
+## Result Interpretation
+
+1. **Consider cohort size**: Small cohorts may have unstable prevalence estimates
+2. **Account for time windows**: Different time windows will yield different prevalences
+3. **Domain-specific considerations**: Different domains have different data completeness patterns
+4. **Clinical context**: Interpret results within appropriate clinical context
+
+# Troubleshooting
+
+## Common Issues
+
+### Database Connection Problems
+- Verify connection parameters
+- Check database permissions
+- Ensure required schemas exist
+
+### TSV Validation Errors
+- Check column names match exactly
+- Verify JSON metadata format
+- Ensure no missing required values
+
+### No Results Found
+- Verify cohort table exists and has data
+- Check concept IDs exist in CDM
+- Confirm time windows are appropriate
+- Review domain table availability
+
+### Performance Issues
+- Consider smaller time windows
+- Check database indexes
+- Monitor database resources
+- Use appropriate batch sizes
+
+# Conclusion
+
+The `computeGaps` package provides a robust, database-sufficient solution for prevalence analysis in OMOP CDM environments. By following this guide, you can effectively analyze treatment gaps and test utilization patterns across different cohorts and time periods.
+
+For additional support:
+- Check the package documentation
+- Review example scripts in `inst/examples/`
+- Create issues on GitHub
+- Consult the OHDSI community
+
+```{r cleanup}
+# Always disconnect when finished
+DatabaseConnector::disconnect(connection)
+```

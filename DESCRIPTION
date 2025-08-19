@@ -1,0 +1,32 @@
+Package: computeGaps
+Title: Treatment Gaps and Prevalence Analysis for OMOP Common Data Model
+Version: 0.0.0.9000
+Authors@R: 
+    person("OHDSI", "Collaborative", , "collaborators@ohdsi.org", role = c("aut", "cre"))
+Description: An OHDSI package for analyzing treatment gaps and prevalence of diagnostic tests and procedures in OMOP Common Data Model (CDM) cohorts. This package provides comprehensive tools for identifying treatment gaps by examining the frequency, distribution, and timing of medical interventions across patient populations. It enables prevalence analysis of diagnostic procedures, laboratory tests, and therapeutic interventions to support evidence-based healthcare research, clinical quality improvement initiatives, and comparative effectiveness research by leveraging standardized OMOP CDM data structures and enabling cross-database analytical workflows.
+License: Apache License (>= 2)
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.2
+URL: https://github.com/A1exanderAlexeyuk/computeGaps
+BugReports: https://github.com/A1exanderAlexeyuk/computeGaps/issues
+Imports:
+    DBI,
+    DatabaseConnector,
+    SqlRender,
+    dplyr,
+    readr,
+    jsonlite,
+    rlang,
+    tibble,
+    magrittr,
+    RODBC
+Suggests:
+    openxlsx,
+    testthat (>= 3.0.0),
+    knitr,
+    rmarkdown,
+    RSQLite,
+    RPostgreSQL
+VignetteBuilder: knitr
+SystemRequirements: Java (>= 8)
