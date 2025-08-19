@@ -6,7 +6,7 @@ A comprehensive R package for analyzing prevalence of diagnostic tests, procedur
 
 The `computeGaps` package provides a complete solution for prevalence analysis in healthcare data research by:
 
-1. **Direct Database Integration** - Connect to OMOP CDM databases without intermediate data files
+1. **Direct Database Integration** - Connect to OMOP CDM databases via JDBC without intermediate data files
 2. **Flexible Cohort Analysis** - Support for single or multiple cohort prevalence comparisons
 3. **Temporal Analysis** - Configurable time windows around index dates for longitudinal studies
 4. **Multi-Domain Support** - Comprehensive coverage of all OMOP CDM clinical domains
@@ -26,7 +26,7 @@ The `computeGaps` package provides a complete solution for prevalence analysis i
 
 | Parameter | Type | Description | Example | Required |
 |-----------|------|-------------|---------|----------|
-| `connection` | DBI connection | Database connection to OMOP CDM | `dbConnect(...)` | Yes |
+| `connection` | DatabaseConnector connection | Database connection to OMOP CDM | `DatabaseConnector::connect(...)` | Yes |
 | `cohort_table` | String | Full table name of cohort table | `"results.cohort"` | Yes |
 | `cohort_id` | Integer/Vector | Cohort definition ID(s) | `1001` or `c(1001,1002)` | Yes |
 | `concept_ids` | Integer vector | OMOP concept IDs to analyze | `c(3013721, 3004249)` | Yes* |
@@ -97,17 +97,15 @@ install.packages("computeGaps")
 ```r
 # Required packages
 required_packages <- c(
-  "DBI",        # Database connectivity
-  "dplyr",      # Data manipulation  
-  "dbplyr",     # Database backend for dplyr
-  "jsonlite",   # JSON handling
-  "readr"       # File I/O
+  "DatabaseConnector",  # JDBC database connectivity
+  "dplyr",             # Data manipulation  
+  "dbplyr",            # Database backend for dplyr
+  "jsonlite",          # JSON handling
+  "readr"              # File I/O
 )
 
 # Optional packages for enhanced functionality
 optional_packages <- c(
-  "RPostgreSQL", # PostgreSQL driver
-  "odbc",        # ODBC connections
   "ggplot2",     # Advanced plotting
   "knitr",       # Report generation
   "openxlsx"     # Excel export
@@ -123,14 +121,17 @@ install.packages(c(required_packages, optional_packages))
 
 ```r
 library(computeGaps)
-library(DBI)
+library(DatabaseConnector)
 
 # Establish database connection
-con <- dbConnect(RPostgreSQL::PostgreSQL(),
-                 host = "your-omop-server",
-                 dbname = "omop_cdm", 
-                 user = "username",
-                 password = "password")
+connectionDetails <- createConnectionDetails(
+  dbms = "postgresql",
+  server = "your-omop-server/database",
+  user = "username",
+  password = "password"
+)
+
+con <- DatabaseConnector::connect(connectionDetails)
 
 # Simple prevalence analysis
 results <- analyze_prevalence(
@@ -375,54 +376,56 @@ multi_period_results <- analyze_multi_period_prevalence(
 | **Required Tables** | `person`, `observation_period`, `cohort` | Core tables for patient identification |
 | **Domain Tables** | Based on analysis scope | `measurement`, `procedure_occurrence`, etc. |
 | **Vocabulary Tables** | `concept`, `concept_relationship` | For concept hierarchy navigation |
-| **Database Engine** | PostgreSQL, SQL Server, Oracle, BigQuery | Via DBI-compatible drivers |
+| **Database Engine** | PostgreSQL, SQL Server, Oracle, BigQuery | Via JDBC drivers |
 
 ### Database Connection Setup
 
 #### PostgreSQL
 
 ```r
-library(RPostgreSQL)
+library(DatabaseConnector)
 
 # PostgreSQL connection
-con <- dbConnect(
-  PostgreSQL(),
-  host = "localhost",
-  port = 5432,
-  dbname = "omop_cdm",
-  user = "omop_user", 
+connectionDetails <- createConnectionDetails(
+  dbms = "postgresql",
+  server = "localhost:5432/omop_cdm",
+  user = "omop_user",
   password = "secure_password"
 )
+
+con <- DatabaseConnector::connect(connectionDetails)
 ```
 
 #### SQL Server
 
 ```r
-library(odbc)
+library(DatabaseConnector)
 
 # SQL Server connection
-con <- dbConnect(
-  odbc::odbc(),
-  driver = "ODBC Driver 17 for SQL Server",
-  server = "sql-server-name",
-  database = "OMOP_CDM",
-  uid = "username",
-  pwd = "password"
+connectionDetails <- createConnectionDetails(
+  dbms = "sql server",
+  server = "sql-server-name.database.windows.net",
+  user = "username",
+  password = "password"
 )
+
+con <- DatabaseConnector::connect(connectionDetails)
 ```
 
 #### BigQuery
 
 ```r
-library(bigrquery)
+library(DatabaseConnector)
 
 # BigQuery connection  
-con <- dbConnect(
-  bigrquery::bigquery(),
-  project = "your-project-id",
-  dataset = "omop_cdm_dataset",
-  billing = "your-billing-project"
+connectionDetails <- createConnectionDetails(
+  dbms = "bigquery",
+  connectionString = "jdbc:bigquery://https://www.googleapis.com/bigquery/v2:443;ProjectId=your-project-id;OAuthType=0;OAuthServiceAcctEmail=your-service-account@project.iam.gserviceaccount.com;OAuthPvtKeyPath=/path/to/key.json",
+  user = "",
+  password = ""
 )
+
+con <- DatabaseConnector::connect(connectionDetails)
 ```
 
 ### Database Validation

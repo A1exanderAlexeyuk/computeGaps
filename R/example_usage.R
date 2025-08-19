@@ -7,8 +7,7 @@
 library(dplyr)
 library(readr)
 library(jsonlite)
-library(DBI)
-library(RSQLite)
+library(DatabaseConnector)
 
 #' Example function to demonstrate the complete workflow with database storage
 #'
@@ -135,10 +134,18 @@ quick_prevalence_test <- function(use_memory_db = TRUE, db_path = "test_prevalen
   cat("Step 1: Setting up test environment...\n")
   
   if (use_memory_db) {
-    con <- DBI::dbConnect(RSQLite::SQLite(), ":memory:")
+    connectionDetails <- DatabaseConnector::createConnectionDetails(
+      dbms = "sqlite",
+      server = ":memory:"
+    )
   } else {
-    con <- DBI::dbConnect(RSQLite::SQLite(), db_path)
+    connectionDetails <- DatabaseConnector::createConnectionDetails(
+      dbms = "sqlite",
+      server = db_path
+    )
   }
+  
+  con <- DatabaseConnector::connect(connectionDetails)
   
   # Create sample TSV data
   sample_file <- tempfile(fileext = ".tsv")
@@ -163,8 +170,8 @@ quick_prevalence_test <- function(use_memory_db = TRUE, db_path = "test_prevalen
   # Step 3: Verify database storage
   cat("Step 3: Verifying database storage...\n")
   
-  stored_count <- DBI::dbGetQuery(con, "SELECT COUNT(*) as count FROM test_prevalence_results")
-  cat("Records stored in database:", stored_count$count, "\n")
+  stored_count <- DatabaseConnector::querySql(con, "SELECT COUNT(*) as count FROM test_prevalence_results")
+  cat("Records stored in database:", stored_count$COUNT, "\n")
   
   # Step 4: Test query functions
   cat("Step 4: Testing query functions...\n")
@@ -175,7 +182,7 @@ quick_prevalence_test <- function(use_memory_db = TRUE, db_path = "test_prevalen
   # Step 5: Clean up
   cat("Step 5: Cleaning up...\n")
   
-  DBI::dbDisconnect(con)
+  DatabaseConnector::disconnect(con)
   if (file.exists(sample_file)) {
     file.remove(sample_file)
   }
@@ -315,7 +322,7 @@ create_test_cohort_table <- function(db_connection, cohort_table_name = "test_co
     )"
   )
   
-  DBI::dbExecute(db_connection, create_query)
+  DatabaseConnector::executeSql(db_connection, create_query)
   
   # Generate sample cohort data
   set.seed(123)  # For reproducible results
@@ -333,7 +340,13 @@ create_test_cohort_table <- function(db_connection, cohort_table_name = "test_co
   )
   
   # Insert data into table
-  DBI::dbWriteTable(db_connection, cohort_table_name, cohort_data, append = TRUE)
+  DatabaseConnector::insertTable(
+    connection = db_connection,
+    tableName = cohort_table_name,
+    data = cohort_data,
+    dropTableIfExists = FALSE,
+    createTable = FALSE
+  )
   
   # Create indexes for better performance
   index_queries <- c(
@@ -342,7 +355,7 @@ create_test_cohort_table <- function(db_connection, cohort_table_name = "test_co
   )
   
   for (query in index_queries) {
-    DBI::dbExecute(db_connection, query)
+    DatabaseConnector::executeSql(db_connection, query)
   }
   
   cat("Test cohort table created with", nrow(cohort_data), "patient records\n")
@@ -362,7 +375,11 @@ setup_test_database <- function(db_path = "prevalence_test_database.db", include
   cat("=== SETTING UP TEST DATABASE ENVIRONMENT ===\n")
   
   # Create database connection
-  con <- DBI::dbConnect(RSQLite::SQLite(), db_path)
+  connectionDetails <- DatabaseConnector::createConnectionDetails(
+    dbms = "sqlite",
+    server = db_path
+  )
+  con <- DatabaseConnector::connect(connectionDetails)
   
   # Create cohort table
   cat("Creating test cohort table...\n")
@@ -411,22 +428,34 @@ setup_test_database <- function(db_path = "prevalence_test_database.db", include
     )
   )
   
-  DBI::dbWriteTable(con, "cohort_definitions", cohort_definitions, overwrite = TRUE)
+  DatabaseConnector::insertTable(
+    connection = con,
+    tableName = "cohort_definitions",
+    data = cohort_definitions,
+    dropTableIfExists = TRUE,
+    createTable = TRUE
+  )
   
   # Display database summary
   cat("\n=== DATABASE SETUP COMPLETE ===\n")
   cat("Database file:", db_path, "\n")
   cat("Tables created:\n")
-  tables <- DBI::dbListTables(con)
+  
+  # Get list of tables using a query
+  tables_query <- "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+  tables_df <- DatabaseConnector::querySql(con, tables_query)
+  tables <- tables_df$NAME
+  
   for (table in tables) {
-    count <- DBI::dbGetQuery(con, paste0("SELECT COUNT(*) as count FROM ", table))$count
-    cat("  -", table, ":", count, "records\n")
+    count_query <- paste0("SELECT COUNT(*) as count FROM ", table)
+    count_result <- DatabaseConnector::querySql(con, count_query)
+    cat("  -", table, ":", count_result$COUNT, "records\n")
   }
   
-  DBI::dbDisconnect(con)
+  DatabaseConnector::disconnect(con)
   
   cat("\nDatabase setup completed successfully!\n")
-  cat("Use DBI::dbConnect(RSQLite::SQLite(), '", db_path, "') to connect\n")
+  cat("Use DatabaseConnector::connect(DatabaseConnector::createConnectionDetails(dbms='sqlite', server='", db_path, "')) to connect\n")
   
   return(db_path)
 }

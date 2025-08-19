@@ -6,7 +6,7 @@
 #' @export
 validate_connection <- function(connection) {
   tryCatch({
-    DBI::dbGetQuery(connection, "SELECT 1")
+    DatabaseConnector::querySql(connection, "SELECT 1")
     return(TRUE)
   }, error = function(e) {
     warning("Database connection is not valid: ", e$message)

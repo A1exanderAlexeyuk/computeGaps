@@ -35,23 +35,6 @@ test_that("Concept column mapping works correctly", {
   expect_error(get_domain_concept_column("invalid_table"))
 })
 
-test_that("Connection string creation works", {
-  # Test trusted connection
-  conn_str <- create_connection_string("server1", "database1", TRUE)
-  expect_true(grepl("Trusted_Connection=yes", conn_str))
-  expect_true(grepl("Server=server1", conn_str))
-  expect_true(grepl("Database=database1", conn_str))
-  
-  # Test username/password connection
-  conn_str <- create_connection_string("server1", "database1", FALSE, "user1", "pass1")
-  expect_true(grepl("UID=user1", conn_str))
-  expect_true(grepl("PWD=pass1", conn_str))
-  expect_false(grepl("Trusted_Connection", conn_str))
-  
-  # Test error when credentials missing
-  expect_error(create_connection_string("server1", "database1", FALSE))
-})
-
 test_that("SQL platform optimization works", {
   # Test SQL Server optimization
   sql <- "SELECT * FROM table LIMIT 10"

@@ -20,12 +20,12 @@
 #' @import dplyr
 #' @import readr
 #' @import jsonlite
-#' @import DBI
+#' @import DatabaseConnector
 #'
 #' @examples
 #' \dontrun{
 #' # Example usage
-#' con <- DBI::dbConnect(...)
+#' con <- DatabaseConnector::connect(...)
 #' results <- analyze_prevalence_from_tsv(
 #'   tsv_file_path = "data/cohort_data.tsv",
 #'   connection = con,
@@ -163,8 +163,8 @@ get_cohort_patient_count <- function(connection, cohort_table_name, cohortname) 
     )")
   
   tryCatch({
-    result <- DBI::dbGetQuery(connection, query)
-    return(as.integer(result$patient_count[1]))
+    result <- DatabaseConnector::querySql(connection, query)
+    return(as.integer(result$PATIENT_COUNT[1]))
   }, error = function(e) {
     warning("Error getting cohort patient count: ", e$message)
     return(0)
@@ -257,8 +257,8 @@ get_patients_with_concept_in_timeframe <- function(connection,
     AND t.", date_col, " <= DATEADD(day, ", days_end, ", c.cohort_start_date)")
   
   tryCatch({
-    result <- DBI::dbGetQuery(connection, query)
-    return(as.integer(result$patient_count[1]))
+    result <- DatabaseConnector::querySql(connection, query)
+    return(as.integer(result$PATIENT_COUNT[1]))
   }, error = function(e) {
     warning("Error getting patients with concept in timeframe: ", e$message)
     return(0)
