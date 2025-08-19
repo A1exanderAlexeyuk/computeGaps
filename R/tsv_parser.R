@@ -144,14 +144,14 @@ get_unique_analyses <- function(analysis_params) {
   return(unique_configs)
 }
 
-#' Validate TSV Structure
+#' Validate TSV Data
 #'
 #' @param tsv_data Data frame with TSV data
 #' @param verbose Logical. Whether to print validation messages
 #'
 #' @return Logical indicating if validation passed
 #' @export
-validate_tsv_structure <- function(tsv_data, verbose = TRUE) {
+validate_tsv_data <- function(tsv_data, verbose = TRUE) {
   errors <- character(0)
   warnings <- character(0)
   
